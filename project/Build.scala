@@ -23,11 +23,9 @@ object ApplicationBuild extends Build {
 
   val appDependencies = Seq(
     "org.scalatest" %% "scalatest" % "2.2.0" % "test",
-
-    "com.typesafe.play" %% "play-iteratees" % "2.3.1",
-
-    "com.typesafe.akka" %% "akka-actor" % "2.3.4",
-    "com.typesafe.akka" %% "akka-testkit" % "2.3.4" % "test"
+    "com.typesafe.play" %% "play-iteratees" % "2.4.4",
+    "com.typesafe.akka" %% "akka-actor" % "2.4.4",
+    "com.typesafe.akka" %% "akka-testkit" % "2.4.4" % "test"
   )
 
   lazy val root = Project(id = "sentinel",

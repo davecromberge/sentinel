@@ -68,11 +68,11 @@ object Client {
   }
 
   def randomRouting[Cmd, Evt](serverHost: String, serverPort: Int, numberOfConnections: Int, description: String = "Sentinel Client", stages: ⇒ PipelineStage[PipelineContext, Cmd, ByteString, Evt, ByteString], workerReconnectTime: FiniteDuration = 2 seconds, resolver: Resolver[Evt, Cmd] = Client.defaultResolver[Cmd, Evt], allowPipelining: Boolean = true, lowBytes: Long = 100L, highBytes: Long = 5000L, maxBufferSize: Long = 20000L)(implicit system: ActorSystem) = {
-    apply(serverHost, serverPort, RandomRouter(numberOfConnections), description, stages, workerReconnectTime, resolver, allowPipelining, lowBytes, highBytes, maxBufferSize)
+    apply(serverHost, serverPort, RandomPool(numberOfConnections), description, stages, workerReconnectTime, resolver, allowPipelining, lowBytes, highBytes, maxBufferSize)
   }
 
   def roundRobinRouting[Cmd, Evt](serverHost: String, serverPort: Int, numberOfConnections: Int, description: String = "Sentinel Client", stages: ⇒ PipelineStage[PipelineContext, Cmd, ByteString, Evt, ByteString], workerReconnectTime: FiniteDuration = 2 seconds, resolver: Resolver[Evt, Cmd] = Client.defaultResolver[Cmd, Evt], allowPipelining: Boolean = true, lowBytes: Long = 100L, highBytes: Long = 5000L, maxBufferSize: Long = 20000L)(implicit system: ActorSystem) = {
-    apply(serverHost, serverPort, RoundRobinRouter(numberOfConnections), description, stages, workerReconnectTime, resolver, allowPipelining, lowBytes, highBytes, maxBufferSize)
+    apply(serverHost, serverPort, RoundRobinPool(numberOfConnections), description, stages, workerReconnectTime, resolver, allowPipelining, lowBytes, highBytes, maxBufferSize)
   }
 }
 
@@ -129,7 +129,7 @@ class ClientCore[Cmd, Evt](routerConfig: RouterConfig, description: String, reco
   private case object InitializeRouter
   private case class ReconnectRouter(address: InetSocketAddress)
 
-  var coreRouter: Option[ActorRef] = None
+  var coreRouter: Option[Router] = None
   var reconnecting = false
 
   def antennaManagerProto(address: InetSocketAddress) =
@@ -149,7 +149,9 @@ class ClientCore[Cmd, Evt](routerConfig: RouterConfig, description: String, reco
         val router = routerProto(x.addr)
         context.watch(router)
         addresses = addresses ++ List(x.addr -> Some(router))
-        coreRouter = Some(context.system.actorOf(Props.empty.withRouter(RoundRobinRouter(routees = addresses.map(_._2).flatten))))
+        val roundRobinPool =
+          Router(RoundRobinRoutingLogic(), addresses.map(_._2).flatten.map(ActorRefRoutee.apply).toIndexedSeq)
+        coreRouter = Some(roundRobinPool)
         reconnecting = false
         unstashAll()
       } else {
@@ -162,7 +164,9 @@ class ClientCore[Cmd, Evt](routerConfig: RouterConfig, description: String, reco
       terminatedRouter match {
         case Some(r) ⇒
           addresses = addresses diff addresses.find(_._2 == Some(actor)).toList
-          coreRouter = Some(context.system.actorOf(Props.empty.withRouter(RoundRobinRouter(routees = addresses.map(_._2).flatten))))
+          val roundRobinPool =
+            Router(RoundRobinRoutingLogic(), addresses.map(_._2).flatten.map(ActorRefRoutee.apply).toIndexedSeq)
+          coreRouter = Some(roundRobinPool)
           log.error("Router for: " + r._1 + " died, restarting in: " + reconnectDuration.toString())
           reconnecting = true
           context.system.scheduler.scheduleOnce(reconnectDuration, self, Client.ConnectToServer(r._1))
@@ -171,7 +175,7 @@ class ClientCore[Cmd, Evt](routerConfig: RouterConfig, description: String, reco
 
     case x: Command[Cmd, Evt] ⇒
       coreRouter match {
-        case Some(r) ⇒ if (reconnecting) stash() else r forward x
+        case Some(r) ⇒ if (reconnecting) stash() else r.route(x, sender())
         case None    ⇒ x.registration.promise.failure(new Exception("No connection(s) available"))
       }
 
